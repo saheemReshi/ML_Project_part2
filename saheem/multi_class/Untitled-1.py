@@ -124,6 +124,56 @@ print(test_clean.isna().sum())
 
 
 # %%
+# ---------------------------------------------------
+#  Visualise numeric columns for outliers & skew
+# ---------------------------------------------------
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+num_cols = train_clean.select_dtypes(include=["int64","float64"]).columns.tolist()
+print(num_cols)
+# 1. Boxplots (outliers)
+plt.figure(figsize=(16, 12))
+for i, col in enumerate(num_cols, 1):
+    plt.subplot(len(num_cols)//3 + 1, 3, i)
+    sns.boxplot(train_clean[col])
+    plt.title(col)
+plt.tight_layout()
+plt.show()
+
+# 2. Histograms (distribution / skew)
+train_clean[num_cols].hist(figsize=(14, 10), bins=30)
+plt.tight_layout()
+plt.show()
+
+# 3. Summary stats
+print(train_clean[num_cols].describe())
+
+
+# %%
+# ---------------------------------------------------
+# Outlier clipping (winsorizing hard outliers)
+# ---------------------------------------------------
+
+## used domain aware clipping instaed of IQR method
+def clip_outliers(df):
+    df = df.copy()
+
+    # 1. People counts
+    df["num_females"] = df["num_females"].clip(0, 5)
+    df["num_males"] = df["num_males"].clip(0, 5)
+
+    # 2. Stays
+    df["mainland_stay_nights"] = df["mainland_stay_nights"].clip(0, 30)
+    df["island_stay_nights"] = df["island_stay_nights"].clip(0, 21)
+
+    return df
+
+train_clean = clip_outliers(train_clean)
+test_clean  = clip_outliers(test_clean)
+
+
+# %%
 X = train_clean.drop(columns=["spend_category", "trip_id"])
 y = train_clean["spend_category"]
 
@@ -141,23 +191,77 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import RobustScaler
 
 categorical_cols = X.select_dtypes(include=["object"]).columns.tolist()
 num_cols = X.select_dtypes(include=["int64","float64"]).columns.tolist()
 
 preprocess = ColumnTransformer([
     ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
-    ("num", StandardScaler(), num_cols)
+    ("num", RobustScaler(), num_cols)
 ])
 
 svm_pipeline = Pipeline([
     ("preprocess", preprocess),
     ("svm", SVC(kernel="rbf", C=3, gamma="scale", class_weight="balanced"))
-])
+])# these params gave best result when fit on entire X,y, grid didn't give
 
 svm_pipeline.fit(X_train, y_train)
 pred = svm_pipeline.predict(X_val)
 print("Val accuracy:", accuracy_score(y_val, pred))
+
+
+# %%
+# from sklearn.model_selection import GridSearchCV
+
+# # 1. Define pipeline
+# svm_pipeline = Pipeline([
+#     ("preprocess", preprocess),
+#     ("svm", SVC(kernel="rbf"))
+# ])
+
+# # 2. Param grid
+# param_grid = {
+#     "svm__C": [0.5, 1, 2, 3, 5],
+#     "svm__gamma": ["scale", 0.05, 0.1, 0.2],
+#     "svm__class_weight": ["balanced"]
+# }
+
+# # 3. Grid search
+# grid = GridSearchCV(
+#     estimator=svm_pipeline,
+#     param_grid=param_grid,
+#     cv=5,
+#     scoring="accuracy",
+#     n_jobs=-1,
+#     verbose=2
+# )
+
+# grid.fit(X_train, y_train)
+
+# print("Best params:", grid.best_params_)
+# print("Best CV score:", grid.best_score_)
+
+# # 4. Use the best model found
+# best_model = grid.best_estimator_
+
+# # 5. Evaluate on validation set
+# pred = best_model.predict(X_val)
+# print("Val accuracy:", accuracy_score(y_val, pred))
+
+
+# %%
+
+# # 6. Train on full data
+# best_model.fit(X_train, y_train)
+
+# # 7. Predict on test
+# svm_test_pred = best_model.predict(test_clean)
+
+# pd.DataFrame({
+#     "trip_id": test["trip_id"],
+#     "spend_category": svm_test_pred
+# }).to_csv("svm_submission.csv", index=False)
 
 
 # %%
@@ -202,28 +306,6 @@ sub_svm = pd.DataFrame({
 })
 
 sub_svm.to_csv("svm_submission.csv", index=False)
-
-
-# %%
-from sklearn.model_selection import GridSearchCV
-
-param_grid = {
-    "svm__C": [0.5, 1, 2, 3, 5],
-    "svm__gamma": ["scale", 0.05, 0.1, 0.2],
-    "svm__class_weight": ["balanced"]
-}
-
-grid = GridSearchCV(
-    svm_pipeline,
-    param_grid,
-    cv=5,
-    scoring="accuracy",
-    n_jobs=-1
-)
-
-grid.fit(X_train, y_train)
-print("Best params:", grid.best_params_)
-print("Best score:", grid.best_score_)
 
 
 
